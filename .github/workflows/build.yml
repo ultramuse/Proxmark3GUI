@@ -28,57 +28,75 @@ jobs:
         $msys2Path = "C:\tools\msys64\usr\bin\bash.exe"
         & $msys2Path -lc "pacman -S --noconfirm mingw-w64-x86_64-readline"
         
-    - name: Build Proxmark3 CLI
+    - name: Clone and build Proxmark3 CLI
       run: |
-        git clone https://github.com/Proxmark/proxmark3.git
+        Write-Host "Cloning Proxmark3 repository..."
+        git clone --depth 1 https://github.com/Proxmark/proxmark3.git
         cd proxmark3
+        
+        Write-Host "Checking repository structure:"
+        Get-ChildItem | Format-Table Name
+        
+        if (-not (Test-Path "CMakeLists.txt")) {
+          Write-Error "CMakeLists.txt not found in proxmark3 directory"
+          exit 1
+        }
+        
+        Write-Host "Creating build directory..."
         mkdir build
         cd build
-        # 使用Ninja构建系统
-        cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DREADLINE_INCLUDE_DIR=C:/tools/msys64/mingw64/include -DREADLINE_LIBRARY=C:/tools/msys64/mingw64/lib/libreadline.dll.a
+        
+        Write-Host "Running CMake..."
+        cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release `
+          -DREADLINE_INCLUDE_DIR=C:/tools/msys64/mingw64/include `
+          -DREADLINE_LIBRARY=C:/tools/msys64/mingw64/lib/libreadline.dll.a
+          
         if ($LASTEXITCODE -ne 0) { 
           Write-Error "CMake failed"
           exit 1 
         }
+        
+        Write-Host "Building Proxmark3..."
         cmake --build .
+        
         if ($LASTEXITCODE -ne 0) { 
           Write-Error "Build failed"
           exit 1 
         }
-        echo "PROXMARK_PATH=$env:GITHUB_WORKSPACE\proxmark3\build\client\proxmark3.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         
-    - name: Check Proxmark3 CLI
-      run: |
-        if (-not (Test-Path $env:PROXMARK_PATH)) {
-          Write-Error "proxmark3.exe not found at $env:PROXMARK_PATH"
+        $clientPath = "$env:GITHUB_WORKSPACE\proxmark3\build\client\proxmark3.exe"
+        if (-not (Test-Path $clientPath)) {
+          Write-Error "proxmark3.exe not found at $clientPath"
           exit 1
         }
-        Write-Host "proxmark3.exe found at $env:PROXMARK_PATH"
+        
+        echo "PROXMARK_PATH=$clientPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         
     - name: Build GUI
       run: |
         # 修改代码中的路径
         (Get-Content proxmark3.cpp) -replace '"proxmark3.exe"', "`"$env:PROXMARK_PATH`"" | Set-Content proxmark3.cpp
-        # 使用qmake生成Makefile
+        
+        Write-Host "Running qmake..."
         qmake -spec win32-msvc
+        
         if ($LASTEXITCODE -ne 0) { 
           Write-Error "qmake failed"
           exit 1 
         }
-        # 使用nmake构建
+        
+        Write-Host "Building GUI..."
         nmake release
+        
         if ($LASTEXITCODE -ne 0) { 
           Write-Error "nmake failed"
           exit 1 
         }
         
-    - name: Check GUI executable
-      run: |
         if (-not (Test-Path "release\Proxmark3GUI.exe")) {
           Write-Error "Proxmark3GUI.exe not found in release directory"
           exit 1
         }
-        Write-Host "Proxmark3GUI.exe found in release directory"
         
     - name: Package
       run: |
@@ -86,9 +104,11 @@ jobs:
         copy release\Proxmark3GUI.exe package\
         copy $env:PROXMARK_PATH package\
         copy "C:\Program Files\LibUSB-Win32\bin\libusb0.dll" package\
-        # 使用windeployqt收集依赖
+        
+        Write-Host "Running windeployqt..."
         windeployqt --release --force package\Proxmark3GUI.exe
-        # 创建压缩包
+        
+        Write-Host "Creating archive..."
         7z a Proxmark3GUI-Windows.zip .\package\*
         
     - name: Upload Artifact
